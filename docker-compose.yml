@@ -130,6 +130,22 @@ services:
       - sacv_network
     restart: unless-stopped
 
+  # Telegram Bot Handler
+  telegram-bot:
+    build: ./services/notifier
+    container_name: sacv_telegram_bot
+    command: ["python", "src/telegram_bot.py"]
+    environment:
+      DATABASE_URL: postgresql://sacv_user:${DB_PASSWORD}@postgres:5432/sacv_db
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - sacv_network
+    restart: unless-stopped
+
+
   # API Gateway
   api-gateway:
     build: ./services/api-gateway
