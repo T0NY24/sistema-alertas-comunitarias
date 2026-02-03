@@ -30,7 +30,6 @@ class NotifierService:
         self.db_conn = None
         self.rabbitmq_conn = None
         self.channel = None
-        # Aumentamos el pool para evitar el 'Pool timeout'
         self.request = HTTPXRequest(connection_pool_size=20)
         self.bot = Bot(token=TELEGRAM_BOT_TOKEN, request=self.request)
         
@@ -53,31 +52,59 @@ class NotifierService:
             logger.error("rabbitmq_connection_failed", error=str(e))
             raise
 
+    def format_message(self, event):
+        """Da formato bonito al mensaje de Telegram"""
+        try:
+            # Iconos según severidad
+            icons = {
+                "ALTA": "🚨🔴",
+                "MEDIA": "⚠️🟠",
+                "BAJA": "ℹ️🟢"
+            }
+            severity = event.get('severity', 'MEDIA')
+            icon = icons.get(severity, "⚠️")
+            
+            # Extraemos datos asegurando que no sean None
+            title = event.get('title', 'Alerta de Evento')
+            # AQUÍ ESTABA EL ERROR: Usar 'content' en vez de 'detail'
+            content = event.get('content') or event.get('detail') or event.get('description') or "Sin detalles disponibles."
+            province = event.get('zone_raw') or event.get('province_name') or "Zona no especificada"
+            mag = event.get('magnitude', 'N/A')
+            
+            # Construimos el mensaje final
+            message = (
+                f"{icon} *{title}*\n\n"
+                f"📍 *Ubicación:* {province}\n"
+                f"📉 *Magnitud:* {mag}\n"
+                f"📝 *Detalle:* {content}\n\n"
+                f"🕒 *Hora:* {event.get('occurred_at', 'N/A')}\n"
+                f"🔗 _Fuente: Sistema de Alertas Comunitarias_"
+            )
+            return message
+            
+        except Exception as e:
+            logger.error("format_error", error=str(e))
+            return "🚨 Alerta recibida (Error de formato)"
+
     async def send_telegram_msg(self, chat_id, event):
-        """Envío asíncrono robusto"""
-        mensaje = (
-            f"🚨 *ALERTA: {event.get('type', 'EVENTO').upper()}*\n\n"
-            f"📍 *Zona:* {event.get('zone')}\n"
-            f"📝 *Detalle:* {event.get('description')}\n"
-            f"📅 *Fecha:* {time.strftime('%Y-%m-%d %H:%M:%S')}"
-        )
-        # Usamos 'async with bot' para asegurar que el loop no se cierre prematuramente
+        """Envío con formato profesional"""
+        mensaje = self.format_message(event)
         async with self.bot:
             await self.bot.send_message(chat_id=chat_id, text=mensaje, parse_mode='Markdown')
             return True
 
     def get_subscriptions(self, event):
-        """Consulta alineada a tus tablas: sub_id, channel_id, email"""
+        """Consulta usando el nuevo province_id numérico"""
         cursor = self.db_conn.cursor(cursor_factory=RealDictCursor)
         try:
+            # Ahora filtramos por province_id que es más rápido y seguro
             cursor.execute("""
-                SELECT s.sub_id, s.user_id, s.channel_id, u.email
+                SELECT s.sub_id, s.channel_id
                 FROM subscriptions s
-                JOIN users u ON s.user_id = u.user_id
                 WHERE s.active = true
-                  AND s.zone = %s
+                  AND s.province_id = %s
                   AND (s.type = %s OR s.type IS NULL)
-            """, (event.get('zone'), event.get('type')))
+            """, (event.get('province_id'), event.get('type')))
             return cursor.fetchall()
         except Exception as e:
             self.db_conn.rollback()
@@ -87,15 +114,18 @@ class NotifierService:
             cursor.close()
 
     def save_notification(self, sub_id, event_id, chat_id, status, error=None):
-        """Insert corregido con to_address"""
+        """Intento de guardado con manejo de error de Foreign Key"""
         cursor = self.db_conn.cursor()
         try:
             notif_id = str(uuid.uuid4())
             cursor.execute("""
-                INSERT INTO notifications (notif_id, event_id, sub_id, channel, to_address, status, error_message)
-                VALUES (%s, %s, %s, 'telegram', %s, %s, %s)
+                INSERT INTO notifications (notif_id, event_id, sub_id, channel, to_address, sent_at, status, error_message)
+                VALUES (%s, %s, %s, 'telegram', %s, CURRENT_TIMESTAMP, %s, %s)
             """, (notif_id, event_id, sub_id, str(chat_id), status, error))
             self.db_conn.commit()
+        except psycopg2.errors.ForeignKeyViolation:
+            self.db_conn.rollback()
+            logger.warning("save_notification_skipped_fk", reason="event_id_not_in_db_yet")
         except Exception as e:
             self.db_conn.rollback()
             logger.error("save_notification_failed", error=str(e))
@@ -107,7 +137,7 @@ class NotifierService:
         subs = self.get_subscriptions(event)
         
         if not subs:
-            logger.info("no_subscriptions_found", zone=event.get('zone'))
+            logger.info("no_subscriptions_found", province_id=event.get('province_id'))
             return
 
         for s in subs:
@@ -123,7 +153,6 @@ class NotifierService:
         event = json.loads(body)
         logger.info("processing_event", event_id=event.get('event_id'))
         
-        # Ejecución en un loop nuevo por cada mensaje para evitar 'loop is closed'
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:

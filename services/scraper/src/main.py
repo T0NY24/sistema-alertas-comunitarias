@@ -11,10 +11,12 @@ from psycopg2.extras import RealDictCursor
 import pika
 import redis
 import structlog
-from apscheduler.schedulers.blocking import BlockingScheduler
+from apscheduler.schedulers.background import BackgroundScheduler
 from scrapers.igepn_scraper import IGEPNScraper
 from scrapers.inamhi_scraper import InamhiScraper
 from scrapers.cnel_scraper import CnelScraper
+from scrapers.usgs_scraper import USGSScraper
+from scrapers.open_meteo_scraper import OpenMeteoScraper
 
 # Configurar logging estructurado
 structlog.configure(
@@ -39,7 +41,7 @@ class ScraperService:
         self.redis_client = None
         self.rabbitmq_conn = None
         self.rabbitmq_channel = None
-        self.scheduler = BlockingScheduler()
+        self.scheduler = BackgroundScheduler()
         self.scrapers = {
             'sismo': IGEPNScraper,
             'lluvia': InamhiScraper,
@@ -127,10 +129,35 @@ class ScraperService:
         finally:
             cursor.close()
     
-    def save_raw_event(self, event):
+    def save_raw_event(self, event, source_id=None):
         """Guardar evento crudo en la base de datos"""
+        import hashlib
+        import uuid
+        
         cursor = self.db_conn.cursor()
         try:
+            # Si el evento no tiene source_id, fetched_at o raw_hash, los generamos
+            if 'source_id' not in event and source_id:
+                event['source_id'] = source_id
+            
+            if 'fetched_at' not in event:
+                event['fetched_at'] = datetime.utcnow().isoformat()
+            
+            if 'raw_hash' not in event:
+                # Generar hash del payload
+                payload_str = json.dumps(event.get('raw_payload', event), sort_keys=True)
+                event['raw_hash'] = hashlib.sha256(payload_str.encode()).hexdigest()
+            
+            # Si el evento es el payload directo (formato nuevo de IGEPNScraper)
+            if 'raw_payload' not in event:
+                raw_payload = event
+                event = {
+                    'source_id': source_id,
+                    'fetched_at': datetime.utcnow().isoformat(),
+                    'raw_payload': raw_payload,
+                    'raw_hash': hashlib.sha256(json.dumps(raw_payload, sort_keys=True).encode()).hexdigest()
+                }
+            
             cursor.execute("""
                 INSERT INTO raw_events (source_id, fetched_at, raw_payload, raw_hash)
                 VALUES (%s, %s, %s, %s)
@@ -211,21 +238,55 @@ class ScraperService:
                           ttl=self.redis_client.ttl(rate_key))
             return
         
-        # Seleccionar scraper según tipo
-        scraper_class = self.scrapers.get(source_config['type'])
-        if not scraper_class:
-            logger.error("scraper_not_found", 
-                        type=source_config['type'],
-                        source=source_name)
+        # Selección de scraper
+        scraper = None
+        base = source_config['base_url'].lower()
+
+        if source_config['type'] == 'sismo':
+
+            if 'usgs' in base:
+                scraper = USGSScraper()
+                logger.info("using_usgs_scraper", source=source_name)
+
+            elif 'igepn' in base:
+                scraper = IGEPNScraper()
+                logger.info("using_igepn_scraper", source=source_name)
+
+            else:
+                logger.error("unknown_seismic_source", source=source_name)
+                return
+
+        elif source_config['type'] == 'lluvia':
+
+            if 'open-meteo' in base:
+                config = source_config.get('parser_config', {})
+                lat = config.get('lat')
+                lon = config.get('lon')
+                city = config.get('city', 'Ubicación Desconocida')
+
+                if lat and lon:
+                    scraper = OpenMeteoScraper(lat, lon, city)
+                    logger.info("using_open_meteo_scraper", source=source_name)
+                else:
+                    logger.error("missing_weather_config", source=source_name)
+                    return
+            else:
+                scraper = InamhiScraper(source_config)
+                logger.info("using_inamhi_scraper", source=source_name)
+
+        elif source_config['type'] == 'corte':
+            scraper = CnelScraper(source_config)
+
+
+        if scraper is None:
+            logger.error("scraper_not_found", source=source_name)
             return
         
-        # Ejecutar scraper
-        scraper = scraper_class(source_config)
         event = scraper.scrape()
         
         if event:
             # Guardar en base de datos
-            raw_id = self.save_raw_event(event)
+            raw_id = self.save_raw_event(event, source_id)
             
             if raw_id:
                 # Publicar a queue para procesamiento
@@ -275,25 +336,30 @@ class ScraperService:
                        frequency_sec=frequency)
     
     def run(self):
-        """Iniciar servicio de scraping"""
         logger.info("scraper_service_starting")
-        
-        # Conectar a servicios
+
         logger.info("connecting_to_services")
         self.connect_db()
         self.connect_redis()
         self.connect_rabbitmq()
-        
-        # Programar fuentes
+
         logger.info("scheduling_sources")
         self.schedule_sources()
-        
-        # Iniciar scheduler
+
         logger.info("scheduler_started", 
                    jobs=len(self.scheduler.get_jobs()))
+
+        # Iniciar scheduler en background
+        self.scheduler.start()
         
+        import threading
+        threading.current_thread().name = "MainThread"
+        
+        logger.info("scheduler_running_forever")
+
         try:
-            self.scheduler.start()
+            while True:
+                time.sleep(1)
         except (KeyboardInterrupt, SystemExit):
             logger.info("scraper_service_stopping")
             if self.rabbitmq_conn:

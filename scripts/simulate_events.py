@@ -1,24 +1,40 @@
 """
-SACV - Simulador de Alertas Oficial
-Script para enviar eventos de prueba a RabbitMQ y verificar el sistema de notificaciones
+SACV - Simulador de Alertas Oficial (Versión IDs Numéricos - 24 Provincias)
+Script para enviar eventos de prueba a RabbitMQ manteniendo la estructura original.
 """
 import pika
 import json
 import uuid
 import sys
 import os
+import time
+import random
 
-# Configuración de RabbitMQ (ajusta según tu .env)
+# --- CONFIGURACIÓN DE RABBITMQ ---
 RABBITMQ_HOST = 'localhost'
 RABBITMQ_PORT = 5672
 RABBITMQ_USER = 'sacv'
 RABBITMQ_PASSWORD = 'rabbitmq_secure_password_2026'
 
+# Mapeo oficial de Provincias e IDs
+PROVINCIAS_IDS = {
+    "AZUAY": 1, "BOLIVAR": 2, "CAÑAR": 3, "CARCHI": 4, "COTOPAXI": 5,
+    "CHIMBORAZO": 6, "EL ORO": 7, "ESMERALDAS": 8, "GUAYAS": 9, "IMBABURA": 10,
+    "LOJA": 11, "LOS RIOS": 12, "MANABI": 13, "MORONA SANTIAGO": 14, "NAPO": 15,
+    "PASTAZA": 16, "PICHINCHA": 17, "TUNGURAHUA": 18, "ZAMORA CHINCHIPE": 19,
+    "GALAPAGOS": 20, "SUCUMBIOS": 21, "ORELLANA": 22, "STO. DOMINGO": 23, "SANTA ELENA": 24
+}
 
-def enviar_alerta(event_type, zone, title, description, severity="Media"):
+def enviar_alerta(event_type, province_name, title, description, severity="Media"):
     """
-    Envía un evento de prueba a la cola confirmed_events de RabbitMQ
+    Envía un evento de prueba usando el ID Numérico (province_id).
     """
+    province_id = PROVINCIAS_IDS.get(province_name.upper())
+    
+    if not province_id:
+        print(f"\n❌ [ERROR] La provincia '{province_name}' no es válida.")
+        return False
+
     credentials = pika.PlainCredentials(RABBITMQ_USER, RABBITMQ_PASSWORD)
     
     try:
@@ -30,171 +46,113 @@ def enviar_alerta(event_type, zone, title, description, severity="Media"):
             )
         )
         channel = connection.channel()
-        
-        # Declarar la cola (por si no existe)
         channel.queue_declare(queue='confirmed_events', durable=True)
         
-        # Declarar la cola (por si no existe)
-        channel.queue_declare(queue='confirmed_events', durable=True)
-        
-        # Crear payload del evento
+        # Payload Estándar (El que funcionaba originalmente)
         payload = {
             "event_id": str(uuid.uuid4()),
             "type": event_type,
-            "zone": zone,
+            "province_id": province_id,      # Enviamos el ID numérico (1-24)
+            "province_name": province_name.upper(), 
             "title": title,
             "description": description,
             "severity": severity,
-            "score": 85,
-            "evidence_url": "https://www.igepn.edu.ec/",
-            "occurred_at": "2026-01-30T10:00:00"
+            "score": random.randint(70, 99),
+            "occurred_at": time.strftime("%Y-%m-%dT%H:%M:%S")
         }
         
-        # Publicar mensaje
         channel.basic_publish(
             exchange='',
             routing_key='confirmed_events',
             body=json.dumps(payload),
-            properties=pika.BasicProperties(
-                delivery_mode=2,  # Mensaje persistente
-            )
+            properties=pika.BasicProperties(delivery_mode=2)
         )
         
-        print(f"\n✅ [EXITO] Evento '{event_type}' enviado a la zona '{zone}'")
-        print(f"   📋 Título: {title}")
-        print(f"   📝 Descripción: {description}")
-        print(f"   🎯 Severidad: {severity}")
-        print(f"   🆔 Event ID: {payload['event_id']}")
+        print(f"✅ [ENVIADO] {province_name:<15} (ID: {province_id:02d}) -> {event_type.upper()}")
         
         connection.close()
         return True
         
     except Exception as e:
         print(f"\n❌ [ERROR] No se pudo conectar a RabbitMQ: {e}")
-        print(f"   💡 Verifica que Docker esté corriendo: docker-compose ps")
         return False
 
+def simular_masivo_24():
+    """Recorre las 24 provincias y envía un evento aleatorio a cada una."""
+    print("\n" + "!"*60)
+    print("🇪🇨 INICIANDO SIMULACIÓN NACIONAL (24 PROVINCIAS) 🇪🇨")
+    print("!"*60 + "\n")
+    
+    tipos = ["sismo", "lluvia", "corte", "incendio", "deslizamiento"]
+    severidades = ["Alta", "Media", "Baja"]
+    
+    count = 0
+    for provincia in PROVINCIAS_IDS:
+        # Variamos los datos para que no parezcan repetidos
+        tipo_evento = random.choice(tipos)
+        severidad = random.choice(severidades)
+        
+        enviar_alerta(
+            event_type=tipo_evento,
+            province_name=provincia,
+            title=f"ALERTA EN {provincia}",
+            description=f"Evento de prueba masiva para validación de ID {PROVINCIAS_IDS[provincia]}",
+            severity=severidad
+        )
+        count += 1
+        time.sleep(0.1) # Pausa estética
+        
+    print(f"\n🎉 Simulacion finalizada. Se enviaron {count} eventos.")
 
 def mostrar_menu():
-    """Muestra el menú interactivo"""
     print("\n" + "="*50)
-    print("🚀 SACV - SIMULADOR DE ALERTAS OFICIAL")
+    print("🚀 SACV - SIMULADOR DE ALERTAS (ORIGINAL)")
     print("="*50)
-    print("\n📍 EVENTOS PREDEFINIDOS:")
-    print("1. 🌍 Sismo en PICHINCHA (Magnitud 4.8)")
-    print("2. 🌧️  Lluvia en GUAYAS (Alerta Meteorológica)")
-    print("3. ⚡ Corte de Energía en LOJA (Mantenimiento)")
-    print("4. 🌍 Sismo en AZUAY (Magnitud 5.2)")
-    print("5. 🌧️  Lluvia en MANABI (Lluvias intensas)")
-    print("6. ⚡ Corte en TUNGURAHUA (Emergencia)")
-    print("\n🔧 OPCIONES AVANZADAS:")
-    print("7. ✏️  Evento Personalizado")
-    print("8. 🔄 Enviar múltiples eventos de prueba")
-    print("\n0. ❌ Salir")
+    print("\n📍 PRUEBAS RÁPIDAS:")
+    print("1. 🌍 Sismo en PICHINCHA (ID: 17)")
+    print("2. 🌧️  Lluvia en GUAYAS (ID: 9)")
+    print("3. ⚡ Corte en LOJA (ID: 11)")
+    print("4. 🌍 Sismo en MANABI (ID: 13)")
+    print("5. ⚡ Corte en AZUAY (ID: 1)")
+    print("\n🔥 PRUEBA DE CARGA:")
+    print("6. 🇪🇨 Simulación Masiva (Las 24 Provincias)")
+    print("\n🔧 OTRAS OPCIONES:")
+    print("7. ✏️  Evento Personalizado (Manual)")
+    print("0. ❌ Salir")
     print("="*50)
-
 
 def evento_personalizado():
-    """Permite crear un evento personalizado"""
     print("\n📝 CREAR EVENTO PERSONALIZADO")
-    print("-" * 40)
-    
-    print("\nTipos disponibles: sismo, lluvia, corte")
-    event_type = input("👉 Tipo de evento: ").lower().strip()
-    
-    print("\nProvincias disponibles:")
-    print("AZUAY, BOLIVAR, CAÑAR, CARCHI, CHIMBORAZO, COTOPAXI")
-    print("EL ORO, ESMERALDAS, GUAYAS, IMBABURA, LOJA, LOS RIOS")
-    print("MANABI, PICHINCHA, SANTA ELENA, TUNGURAHUA")
-    zone = input("\n👉 Zona (Provincia en MAYÚSCULAS): ").upper().strip()
-    
-    title = input("👉 Título del evento: ").strip()
+    event_type = input("👉 Tipo (sismo/lluvia/corte): ").lower().strip()
+    zone = input("👉 Provincia (MAYÚSCULAS): ").upper().strip()
+    title = input("👉 Título: ").strip()
     description = input("👉 Descripción: ").strip()
-    
-    print("\nSeveridad: Alta, Media, Baja")
-    severity = input("👉 Severidad (default: Media): ").strip() or "Media"
-    
+    severity = input("👉 Severidad (Alta/Media/Baja): ").strip() or "Media"
     return enviar_alerta(event_type, zone, title, description, severity)
 
-
-def enviar_multiples_eventos():
-    """Envía varios eventos de prueba para diferentes provincias"""
-    print("\n🔄 ENVIANDO EVENTOS DE PRUEBA MÚLTIPLES...")
-    print("-" * 40)
-    
-    eventos = [
-        ("sismo", "PICHINCHA", "Sismo detectado en Quito", "Magnitud 4.5, epicentro norte de Quito", "Media"),
-        ("lluvia", "GUAYAS", "Alerta meteorológica", "Lluvias intensas en Guayaquil y alrededores", "Alta"),
-        ("corte", "AZUAY", "Corte programado CENTROSUR", "Mantenimiento en sector El Ejido", "Baja"),
-        ("sismo", "MANABI", "Réplica sísmica", "Magnitud 3.8 en Portoviejo", "Baja"),
-    ]
-    
-    exitosos = 0
-    for event_type, zone, title, desc, severity in eventos:
-        if enviar_alerta(event_type, zone, title, desc, severity):
-            exitosos += 1
-    
-    print(f"\n✅ Enviados {exitosos}/{len(eventos)} eventos correctamente")
-
-
 def main():
-    """Función principal"""
     while True:
         mostrar_menu()
+        opcion = input("\n👉 Selecciona una opción: ").strip()
         
-        try:
-            opcion = input("\n👉 Selecciona una opción: ").strip()
-            
-            if opcion == "0":
-                print("\n👋 ¡Hasta luego!")
-                sys.exit(0)
-            
-            elif opcion == "1":
-                enviar_alerta("sismo", "PICHINCHA", "SISMO DETECTADO", 
-                            "Magnitud 4.8 en Quito, epicentro norte", "Media")
-            
-            elif opcion == "2":
-                enviar_alerta("lluvia", "GUAYAS", "ALERTA METEOROLÓGICA", 
-                            "Lluvias intensas en Guayaquil y zonas aledañas", "Alta")
-            
-            elif opcion == "3":
-                enviar_alerta("corte", "LOJA", "MANTENIMIENTO CNEL", 
-                            "Corte programado sector centro de Loja", "Baja")
-            
-            elif opcion == "4":
-                enviar_alerta("sismo", "AZUAY", "SISMO REGISTRADO", 
-                            "Magnitud 5.2 en Cuenca, sentido en toda la provincia", "Alta")
-            
-            elif opcion == "5":
-                enviar_alerta("lluvia", "MANABI", "ALERTA AMARILLA", 
-                            "Lluvias intensas en Portoviejo y Manta", "Media")
-            
-            elif opcion == "6":
-                enviar_alerta("corte", "TUNGURAHUA", "EMERGENCIA ELÉCTRICA", 
-                            "Corte no programado en Ambato por falla técnica", "Alta")
-            
-            elif opcion == "7":
-                evento_personalizado()
-            
-            elif opcion == "8":
-                enviar_multiples_eventos()
-            
-            else:
-                print("\n⚠️  Opción no válida. Intenta de nuevo.")
-            
-            input("\n⏸️  Presiona ENTER para continuar...")
-            
-        except KeyboardInterrupt:
-            print("\n\n👋 ¡Hasta luego!")
-            sys.exit(0)
-        except Exception as e:
-            print(f"\n❌ Error inesperado: {e}")
-            input("\n⏸️  Presiona ENTER para continuar...")
-
+        if opcion == "0":
+            break
+        elif opcion == "1":
+            enviar_alerta("sismo", "PICHINCHA", "ALERTA DE SISMO", "Sismo de 4.8 detectado en Quito", "Alta")
+        elif opcion == "2":
+            enviar_alerta("lluvia", "GUAYAS", "TORMENTA ELÉCTRICA", "Lluvias fuertes en Guayaquil", "Media")
+        elif opcion == "3":
+            enviar_alerta("corte", "LOJA", "CORTE PROGRAMADO", "Mantenimiento en el centro de Loja", "Baja")
+        elif opcion == "4":
+            enviar_alerta("sismo", "MANABI", "SISMO DETECTADO", "Sismo de 5.1 cerca de Manta", "Alta")
+        elif opcion == "5":
+            enviar_alerta("corte", "AZUAY", "FALLA ELÉCTRICA", "Corte imprevisto en Cuenca", "Media")
+        elif opcion == "6":
+            simular_masivo_24()
+        elif opcion == "7":
+            evento_personalizado()
+        
+        input("\n⏸️  Presiona ENTER para continuar...")
 
 if __name__ == "__main__":
-    print("\n🔍 Verificando configuración...")
-    print(f"   Host: {RABBITMQ_HOST}:{RABBITMQ_PORT}")
-    print(f"   Usuario: {RABBITMQ_USER}")
-    
     main()
