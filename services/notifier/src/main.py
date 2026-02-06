@@ -9,6 +9,7 @@ import pika
 import structlog
 from telegram import Bot
 from telegram.request import HTTPXRequest
+from email_client import enviar_correo_alerta
 
 # Configurar logging
 structlog.configure(
@@ -94,18 +95,35 @@ class NotifierService:
             return True
 
     def get_subscriptions(self, event):
-        """Consulta usando el nuevo province_id numérico"""
+        """
+        Busca suscriptores de la provincia específica 
+        Y suscriptores nacionales (ID 0) si la severidad es alta.
+        """
+        if not self.db_conn: return []
+        
         cursor = self.db_conn.cursor(cursor_factory=RealDictCursor)
+        
+        province_id = event.get('province_id')
+        severity = event.get('severity', 'Baja').capitalize() # Asegura 'Alta', 'Media', 'Baja'
+        
         try:
-            # Ahora filtramos por province_id que es más rápido y seguro
-            cursor.execute("""
+            # 🧠 LÓGICA DE SQL MEJORADA
+            # 1. Trae a los de la provincia exacta.
+            # 2. O trae a los de ID 0 (Nacional) PERO SOLO SI es Alta o Media.
+            query = """
                 SELECT s.sub_id, s.channel_id
                 FROM subscriptions s
                 WHERE s.active = true
-                  AND s.province_id = %s
-                  AND (s.type = %s OR s.type IS NULL)
-            """, (event.get('province_id'), event.get('type')))
+                  AND (
+                      s.province_id = %s
+                      OR 
+                      (s.province_id = 0 AND %s IN ('Alta', 'Media'))
+                  )
+            """
+            
+            cursor.execute(query, (province_id, severity))
             return cursor.fetchall()
+
         except Exception as e:
             self.db_conn.rollback()
             logger.error("get_subscriptions_failed", error=str(e))
@@ -152,7 +170,19 @@ class NotifierService:
     def callback(self, ch, method, properties, body):
         event = json.loads(body)
         logger.info("processing_event", event_id=event.get('event_id'))
+
+        # --- 2. NUEVA LÓGICA DE GMAIL ---
+        try:
+            severity = event.get('severity', 'Baja').capitalize()
+            if severity in ['Alta', 'Media']:
+                logger.info("high_severity_email_alert", severity=severity)
+                enviar_correo_alerta(event)
+            else:
+                logger.info("low_severity_skip_email", severity=severity)
+        except Exception as e:
+            logger.error("email_processing_error", error=str(e))
         
+        # --- LÓGICA DE TELEGRAM EXISTENTE ---
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:

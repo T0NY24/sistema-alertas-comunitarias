@@ -6,9 +6,9 @@ import os
 import asyncio
 import psycopg2
 import structlog
-from telegram import Update
+from telegram import Update, BotCommand
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
-from subscription_handler import mostrar_menu_provincias, manejar_callback_suscripcion
+from subscription_handler import mostrar_bienvenida, mostrar_menu_provincias, manejar_callback_suscripcion
 
 # Configuración de Logs
 structlog.configure(
@@ -24,6 +24,18 @@ logger = structlog.get_logger()
 DATABASE_URL = os.getenv('DATABASE_URL')
 TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 
+
+
+async def post_init(application: Application):
+    """
+    Configura el botón de MENÚ azul en la esquina inferior izquierda.
+    Esto mejora la UX para que la gente no tenga que escribir comandos.
+    """
+    await application.bot.set_my_commands([
+        BotCommand("start", "🏠 Menú Principal / Configurar"),
+        BotCommand("help", "❓ Ayuda y Soporte"),
+    ])
+    logger.info("✅ Botón de Menú configurado en Telegram")
 
 async def main():
     """Inicialización del Bot con patrón asíncrono correcto para v20.7"""
@@ -43,10 +55,11 @@ async def main():
 
     # 2. Configuración de la Aplicación (v20.7)
     builder = Application.builder().token(TELEGRAM_BOT_TOKEN)
+    builder.post_init(post_init) # Hook para configurar el menú al arrancar
     application = builder.build()
 
     # 3. Registro de Handlers
-    application.add_handler(CommandHandler("start", mostrar_menu_provincias))
+    application.add_handler(CommandHandler("start", mostrar_bienvenida))
     application.add_handler(CommandHandler("suscribir", mostrar_menu_provincias))
     
     # El patrón ".*" captura todas las interacciones de botones (sub_, ir_menu, cancelar_todo)

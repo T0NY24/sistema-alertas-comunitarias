@@ -121,6 +121,9 @@ services:
       DATABASE_URL: postgresql://sacv_user:${DB_PASSWORD}@postgres:5432/sacv_db
       RABBITMQ_URL: amqp://sacv:${RABBITMQ_PASSWORD}@rabbitmq:5672
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+      GMAIL_USER: ap761324@gmail.com
+      GMAIL_PASSWORD: "fcfb voll gebo zwap"
+      ADMIN_EMAIL: ap761324@gmail.com
     depends_on:
       postgres:
         condition: service_healthy
@@ -134,7 +137,7 @@ services:
   telegram-bot:
     build: ./services/notifier
     container_name: sacv_telegram_bot
-    command: ["python", "src/telegram_bot.py"]
+    command: [ "python", "src/telegram_bot.py" ]
     environment:
       DATABASE_URL: postgresql://sacv_user:${DB_PASSWORD}@postgres:5432/sacv_db
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
@@ -144,7 +147,6 @@ services:
     networks:
       - sacv_network
     restart: unless-stopped
-
 
   # API Gateway
   api-gateway:

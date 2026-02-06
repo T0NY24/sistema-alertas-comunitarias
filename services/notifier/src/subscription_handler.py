@@ -14,42 +14,102 @@ PROVINCIAS = {
     "20": "GALAPAGOS", "21": "SUCUMBIOS", "22": "ORELLANA", "23": "STO. DOMINGO", "24": "SANTA ELENA"
 }
 
+# ID especial para alertas nacionales
+ID_NACIONAL = "0"
+
+async def mostrar_bienvenida(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    👋 Pantalla de inicio amigable.
+    Explica qué hace el bot y da opciones claras (Iniciar / Salir).
+    """
+    user_name = update.effective_user.first_name
+    
+    mensaje = (
+        f"👋 **¡Hola {user_name}!**\n\n"
+        "Bienvenido al **Sistema de Alertas Comunitarias (SACV)**. 🇪🇨\n"
+        "Te notificaré sobre eventos importantes como sismos, lluvias fuertes o cortes de luz.\n\n"
+        "👇 **¿Qué deseas hacer?**"
+    )
+
+    teclado = [
+        [InlineKeyboardButton("🚀 Configurar mis Alertas", callback_data='ver_provincias')],
+        [InlineKeyboardButton("❌ Salir / Cancelar", callback_data='salir')]
+    ]
+    
+    reply_markup = InlineKeyboardMarkup(teclado)
+
+    if update.message:
+        await update.message.reply_text(mensaje, reply_markup=reply_markup, parse_mode='Markdown')
+    else:
+        # Si venimos de un callback (botón "Atrás" por ejemplo)
+        await update.callback_query.edit_message_text(mensaje, reply_markup=reply_markup, parse_mode='Markdown')
+
 def crear_teclado_provincias():
-    """Genera el teclado usando IDs numéricos en el callback_data"""
+    """Genera el teclado usando IDs numéricos en el callback_data e incluye Opción Nacional"""
     keyboard = []
+    
+    # 🌟 OPCIÓN PREMIUM: Alertas Nacionales Críticas (ID 0)
+    keyboard.append([InlineKeyboardButton("🇪🇨 TODO ECUADOR (Solo Emergencias)", callback_data='sub_0')])
+    
     ids = list(PROVINCIAS.keys())
     # Ordenamos numéricamente para que aparezcan en orden
     ids.sort(key=int)
     
     for i in range(0, len(ids), 2):
-        row = [InlineKeyboardButton(PROVINCIAS[ids[i]], callback_data=f"sub_{ids[i]}")]
+        row = [InlineKeyboardButton(f"📍 {PROVINCIAS[ids[i]]}", callback_data=f"sub_{ids[i]}")]
         if i + 1 < len(ids):
-            row.append(InlineKeyboardButton(PROVINCIAS[ids[i+1]], callback_data=f"sub_{ids[i+1]}"))
+            row.append(InlineKeyboardButton(f"📍 {PROVINCIAS[ids[i+1]]}", callback_data=f"sub_{ids[i+1]}"))
         keyboard.append(row)
+    
+    # Botón de volver
+    keyboard.append([InlineKeyboardButton("🔙 Volver al Inicio", callback_data='inicio')])
+    
     return InlineKeyboardMarkup(keyboard)
 
 async def mostrar_menu_provincias(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Muestra el menú de provincias corregido"""
-    await update.message.reply_text(
-        "👋 *¡Bienvenido al SACV!*\n"
-        "🚨 *Sistema de Alertas Comunitarias Verificadas*\n\n"
-        "📍 *¿Qué provincia te interesa monitorear?*\n"
-        "Selecciona una opción de la lista oficial de Ecuador.",
+    # Si viene de comando (no debería con nueva lógica, pero por seguridad)
+    if update.message:
+         await update.message.reply_text(
+            "🗺️ **Selecciona tu ubicación:**\n\n"
+            "Si eliges **Todo Ecuador**, solo te avisaremos de eventos de severidad **ALTA** o **MEDIA** a nivel nacional.",
+            reply_markup=crear_teclado_provincias(),
+            parse_mode='Markdown'
+        )
+         return
+
+    query = update.callback_query
+    await query.answer() # Acknowledge
+    
+    await query.edit_message_text(
+        "🗺️ **Selecciona tu ubicación:**\n\n"
+        "Si eliges **Todo Ecuador**, solo te avisaremos de eventos de severidad **ALTA** o **MEDIA** a nivel nacional.",
         reply_markup=crear_teclado_provincias(),
         parse_mode='Markdown'
     )
 
 async def manejar_callback_suscripcion(update: Update, context: ContextTypes.DEFAULT_TYPE, db_conn):
-    """Maneja la suscripción usando province_id para evitar el error de NULL"""
+    """Maneja todos los clics de los botones."""
     query = update.callback_query
     data = query.data
     chat_id = str(query.message.chat_id)
-    await query.answer()
 
-    if data.startswith("sub_"):
-        # Extraemos el ID numérico (ej: "17")
+    if data == 'ver_provincias':
+        await mostrar_menu_provincias(update, context)
+    
+    elif data == 'inicio':
+        await mostrar_bienvenida(update, context)
+
+    elif data == 'salir':
+        await query.answer("¡Hasta pronto!")
+        await query.edit_message_text("👋 ¡Gracias por visitarnos! Escribe /start cuando quieras volver.")
+    
+    elif data.startswith("sub_"):
+        await query.answer()
+        # Extraemos el ID numérico (ej: "17" o "0")
         prov_id = data.split("_")[1]
-        nombre_provincia = PROVINCIAS.get(prov_id, "Desconocida")
+        
+        nombre_provincia = "TODO ECUADOR (Alertas Críticas)" if prov_id == "0" else PROVINCIAS.get(prov_id, "Desconocida")
         
         cursor = db_conn.cursor()
         try:
@@ -74,39 +134,38 @@ async def manejar_callback_suscripcion(update: Update, context: ContextTypes.DEF
             db_conn.commit()
 
             keyboard = [
-                [InlineKeyboardButton("🔄 Cambiar Provincia", callback_data="ir_menu")],
-                [InlineKeyboardButton("❌ Cancelar Alertas", callback_data="cancelar_todo")]
+                [InlineKeyboardButton("🔄 Cambiar Provincia", callback_data="ver_provincias")],
+                [InlineKeyboardButton("❌ Cancelar Alertas", callback_data="cancelar_todo")],
+                [InlineKeyboardButton("🚪 Salir", callback_data="salir")]
             ]
+            
             await query.edit_message_text(
                 text=f"✅ *Suscripción Guardada*\n\nProvincia: `{nombre_provincia}` (ID: {prov_id})\n\n"
-                     f"Recibirás alertas automáticas para esta zona.",
+                     f"Recibirás alertas automáticas para esta zona."
+                     f"{' (Solo Alta/Media)' if prov_id == '0' else ''}",
                 reply_markup=InlineKeyboardMarkup(keyboard),
                 parse_mode='Markdown'
             )
             logger.info(f"Suscripción exitosa: Chat {chat_id} -> Provincia {prov_id}")
-            print(f"✅ DEBUG: Suscripción guardada - Chat: {chat_id}, Provincia: {prov_id}")
             
         except Exception as e:
             db_conn.rollback()
             logger.error(f"Error crítico en DB: {e}")
-            print(f"❌ DEBUG_ERROR: {e}")  # Esto imprimirá el error real en Docker logs
             await query.edit_message_text(f"❌ Error al guardar en base de datos.\nDetalle: {str(e)[:50]}...")
         finally:
             cursor.close()
 
     elif data == "ir_menu":
-        await query.edit_message_text(
-            "📍 *Cambiar Provincia*\n\nSelecciona tu nueva provincia:", 
-            reply_markup=crear_teclado_provincias(),
-            parse_mode='Markdown'
-        )
+        # Compatibilidad hacia atrás o alias
+        await mostrar_menu_provincias(update, context)
 
     elif data == "cancelar_todo":
-        # ... (Tu lógica de cancelar se mantiene igual, ya funciona con channel_id)
         cursor = db_conn.cursor()
         try:
             cursor.execute("UPDATE subscriptions SET active = false WHERE channel_id = %s", (chat_id,))
             db_conn.commit()
-            await query.edit_message_text("🚫 *Alertas Desactivadas*")
+            
+            teclado_volver = [[InlineKeyboardButton("🔙 Volver al Inicio", callback_data='inicio')]]
+            await query.edit_message_text("🚫 *Alertas Desactivadas*", reply_markup=InlineKeyboardMarkup(teclado_volver), parse_mode='Markdown')
         finally:
             cursor.close()
