@@ -155,11 +155,30 @@ services:
     environment:
       DATABASE_URL: postgresql://sacv_user:${DB_PASSWORD}@postgres:5432/sacv_db
       JWT_SECRET: ${JWT_SECRET}
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_USER: sacv
+      RABBITMQ_PASS: ${RABBITMQ_PASSWORD}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock # Para gestión de contenedores
     ports:
       - "8000:8000"
     depends_on:
       postgres:
         condition: service_healthy
+    networks:
+      - sacv_network
+    restart: unless-stopped
+
+  # Admin Panel (React SPA)
+  admin-panel:
+    build: ./admin-panel
+    container_name: sacv_admin
+    ports:
+      - "3000:80"
+    environment:
+      - VITE_API_URL=http://localhost:8000
+    depends_on:
+      - api-gateway
     networks:
       - sacv_network
     restart: unless-stopped

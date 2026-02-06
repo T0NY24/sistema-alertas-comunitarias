@@ -19,13 +19,13 @@ class USGSScraper:
     def scrape(self):
         """Consulta la API del USGS para sismos en Ecuador"""
         try:
-            # Calculamos "Ayer" para traer datos de las últimas 24h
-            ayer = datetime.utcnow() - timedelta(days=1)
+            # Calculamos fecha de inicio para traer datos del último mes (30 días)
+            fecha_inicio = datetime.utcnow() - timedelta(days=30)
             
             # Parámetros para filtrar SOLO Ecuador y sismos relevantes
             params = {
                 "format": "geojson",
-                "starttime": ayer.strftime("%Y-%m-%d"), # Últimas 24 horas
+                "starttime": fecha_inicio.strftime("%Y-%m-%d"), # Último mes (30 días)
                 "minlatitude": -6.0,   # Sur de Ecuador
                 "maxlatitude": 2.0,    # Norte de Ecuador
                 "minlongitude": -82.0, # Oeste (Costa/Galápagos)
@@ -44,7 +44,7 @@ class USGSScraper:
             # Verificar si hay eventos
             if not data.get('features'):
                 logger.info("usgs_no_events_found", 
-                           message="No hay sismos >2.0 en Ecuador en las últimas 24h")
+                           message="No hay sismos >2.0 en Ecuador en el último mes")
                 return None
 
             # Extraer el sismo más reciente

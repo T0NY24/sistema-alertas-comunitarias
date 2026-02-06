@@ -13,6 +13,9 @@ from pydantic import BaseModel, Field
 import psycopg2
 from psycopg2.extras import RealDictCursor
 import structlog
+import pika
+import json
+import docker
 
 # Configurar logging
 structlog.configure(
@@ -26,6 +29,9 @@ logger = structlog.get_logger()
 
 # Configuración
 DATABASE_URL = os.getenv('DATABASE_URL')
+RABBITMQ_HOST = os.getenv('RABBITMQ_HOST', 'rabbitmq')
+RABBITMQ_USER = os.getenv('RABBITMQ_USER', 'sacv')
+RABBITMQ_PASS = os.getenv('RABBITMQ_PASS', 'sacv_password')
 
 # Pool de conexiones simple
 db_pool = None
@@ -91,6 +97,35 @@ class SourceResponse(BaseModel):
     domain: str
     active: bool
     frequency_sec: int
+
+class ProvinceResponse(BaseModel):
+    """Modelo de respuesta para provincias"""
+    province_id: int
+    name: str
+
+class EventCreateRequest(BaseModel):
+    """Modelo para crear un nuevo evento manualmente"""
+    type: str
+    severity: str
+    zone: Optional[str] = None
+    province_id: Optional[int] = None  # ID de provincia para notificaciones
+    title: str
+    description: Optional[str] = None
+    evidence_url: Optional[str] = None
+    source_id: Optional[str] = None
+    status: str = "NO_VERIFICADO"
+
+class EventUpdateRequest(BaseModel):
+    """Modelo para actualizar el estado de un evento"""
+    status: str = Field(..., description="Nuevo estado: CONFIRMADO o NO_VERIFICADO")
+
+class ContainerInfo(BaseModel):
+    """Modelo de información de contenedor Docker"""
+    name: str
+    status: str
+    state: str
+    image: str
+    created: str
 
 class StatsResponse(BaseModel):
     """Modelo de respuesta para estadísticas"""
@@ -312,6 +347,203 @@ def get_event_detail(event_id: str, db = Depends(get_db)):
     finally:
         cursor.close()
 
+@app.post("/api/events", response_model=EventResponse, tags=["Events"], status_code=201)
+def create_event(
+    event_data: EventCreateRequest,
+    db = Depends(get_db)
+):
+    """Crear un nuevo evento manualmente (desde simulador)"""
+    cursor = db.cursor(cursor_factory=RealDictCursor)
+    
+    try:
+        import hashlib
+        from datetime import datetime
+        
+        logger.info("create_event_request", data=event_data.dict())
+        
+        # Generar dedup_hash para el evento
+        # Para eventos manuales, usamos timestamp completo para permitir múltiples pruebas
+        dedup_string = f"{event_data.type}:{event_data.title}:{datetime.utcnow().timestamp()}"
+        dedup_hash = hashlib.sha256(dedup_string.encode()).hexdigest()
+        
+        # Insertar evento en la base de datos
+        cursor.execute("""
+            INSERT INTO events (
+                type, 
+                occurred_at, 
+                zone, 
+                severity, 
+                title, 
+                description, 
+                evidence_url, 
+                source_id, 
+                dedup_hash, 
+                status, 
+                score,
+                province_id
+            )
+            VALUES (%s, NOW(), %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING 
+                event_id::text,
+                type,
+                occurred_at,
+                zone,
+                severity,
+                title,
+                description,
+                evidence_url,
+                status,
+                score,
+                created_at,
+                province_id
+        """, (
+            event_data.type,
+            event_data.zone,
+            event_data.severity,
+            event_data.title,
+            event_data.description,
+            event_data.evidence_url,
+            event_data.source_id,
+            dedup_hash,
+            event_data.status,
+            50,  # Score default para eventos manuales
+            event_data.province_id  # Agregar province_id para notificaciones
+        ))
+        
+        created_event = cursor.fetchone()
+        db.commit()
+        
+        
+        logger.info(
+            "event_created",
+            event_id=created_event['event_id'],
+            type=event_data.type,
+            title=event_data.title
+        )
+
+        # Si el evento nace como CONFIRMADO, publicarlo a RabbitMQ
+        if event_data.status == 'CONFIRMADO':
+            try:
+                publish_confirmed_event(dict(created_event))
+                logger.info(
+                    "confirmed_event_published_on_create",
+                    event_id=created_event['event_id']
+                )
+            except Exception as e:
+                logger.error(
+                    "failed_to_publish_confirmed_event_on_create",
+                    event_id=created_event['event_id'],
+                    error=str(e)
+                )
+        
+        return dict(created_event)
+        
+    except Exception as e:
+        db.rollback()
+        logger.error("create_event_failed", error=str(e))
+        raise HTTPException(status_code=500, detail=f"Error creating event: {str(e)}")
+    finally:
+        cursor.close()
+
+@app.patch("/api/events/{event_id}", response_model=EventResponse, tags=["Events"])
+def update_event_status(
+    event_id: str,
+    update_data: EventUpdateRequest,
+    db = Depends(get_db)
+):
+    """Actualizar el estado de un evento (Confirmar o Rechazar)"""
+    cursor = db.cursor(cursor_factory=RealDictCursor)
+    
+    try:
+        # Validar que el estado sea válido
+        valid_statuses = ['CONFIRMADO', 'NO_VERIFICADO']
+        if update_data.status not in valid_statuses:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Status inválido. Valores permitidos: {valid_statuses}"
+            )
+        
+        # Actualizar el evento en la base de datos
+        cursor.execute("""
+            UPDATE events
+            SET status = %s, updated_at = NOW()
+            WHERE event_id = %s
+            RETURNING 
+                event_id::text,
+                type,
+                occurred_at,
+                zone,
+                severity,
+                title,
+                description,
+                evidence_url,
+                status,
+                score,
+                created_at
+        """, (update_data.status, event_id))
+        
+        updated_event = cursor.fetchone()
+        
+        if not updated_event:
+            raise HTTPException(status_code=404, detail="Event not found")
+        
+        db.commit()
+        
+        logger.info(
+            "event_status_updated",
+            event_id=event_id,
+            new_status=update_data.status
+        )
+        
+        # Si el evento fue CONFIRMADO, publicarlo a RabbitMQ
+        if update_data.status == 'CONFIRMADO':
+            try:
+                publish_confirmed_event(dict(updated_event))
+                logger.info(
+                    "confirmed_event_published",
+                    event_id=event_id
+                )
+            except Exception as e:
+                logger.error(
+                    "failed_to_publish_confirmed_event",
+                    event_id=event_id,
+                    error=str(e)
+                )
+                # No fallar la request si RabbitMQ falla
+        
+        return dict(updated_event)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error("update_event_status_failed", error=str(e))
+        raise HTTPException(status_code=500, detail="Error updating event status")
+    finally:
+        cursor.close()
+
+@app.get("/api/provinces", response_model=List[ProvinceResponse], tags=["Provinces"])
+def get_provinces(db = Depends(get_db)):
+    """Obtener lista de provincias del Ecuador"""
+    cursor = db.cursor(cursor_factory=RealDictCursor)
+    
+    try:
+        cursor.execute("""
+            SELECT province_id, name
+            FROM provinces
+            ORDER BY name
+        """)
+        provinces = cursor.fetchall()
+        
+        logger.info("provinces_fetched", count=len(provinces))
+        return [dict(p) for p in provinces]
+        
+    except Exception as e:
+        logger.error("get_provinces_failed", error=str(e))
+        raise HTTPException(status_code=500, detail="Error fetching provinces")
+    finally:
+        cursor.close()
+
 @app.get("/api/sources", response_model=List[SourceResponse], tags=["Sources"])
 def get_sources(
     active_only: bool = Query(True),
@@ -405,6 +637,89 @@ def get_stats(db = Depends(get_db)):
         cursor.close()
 
 # ============================================================================
+# Docker Container Management
+# ============================================================================
+
+@app.get("/api/containers", response_model=List[ContainerInfo], tags=["Docker"])
+def get_containers():
+    """Listar todos los contenedores Docker del proyecto"""
+    try:
+        import subprocess
+        import json as json_lib
+        
+        # Usar docker CLI en lugar de SDK (funciona mejor en Windows)
+        result = subprocess.run(
+            ['docker', 'ps', '-a', '--format', '{{json .}}'],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        
+        container_list = []
+        for line in result.stdout.strip().split('\n'):
+            if not line:
+                continue
+            container_data = json_lib.loads(line)
+            
+            # Filtrar solo contenedores de SACV
+            if container_data['Names'].startswith('sacv') or 'sistema-alertas' in container_data['Names']:
+                container_list.append({
+                    "name": container_data['Names'],
+                    "status": container_data['State'],
+                    "state": container_data['Status'],
+                    "image": container_data['Image'],
+                    "created": container_data['CreatedAt']
+                })
+        
+        logger.info("containers_fetched", count=len(container_list))
+        return container_list
+        
+    except subprocess.CalledProcessError as e:
+        logger.error("get_containers_failed", error=str(e), stderr=e.stderr)
+        raise HTTPException(status_code=500, detail=f"Error executing docker command: {e.stderr}")
+    except Exception as e:
+        logger.error("get_containers_failed", error=str(e))
+        raise HTTPException(status_code=500, detail=f"Error fetching containers: {str(e)}")
+
+@app.post("/api/containers/{container_name}/restart", tags=["Docker"])
+def restart_container(container_name: str):
+    """Reiniciar un contenedor específico"""
+    try:
+        import subprocess
+        
+        # Usar docker CLI para reiniciar
+        result = subprocess.run(
+            ['docker', 'restart', container_name],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=30
+        )
+        
+        logger.info(
+            "container_restarted",
+            container_name=container_name
+        )
+        
+        return {
+            "success": True,
+            "message": f"Container '{container_name}' restarted successfully",
+            "container": container_name
+        }
+        
+    except subprocess.TimeoutExpired:
+        logger.error("restart_container_timeout", container_name=container_name)
+        raise HTTPException(status_code=504, detail=f"Timeout restarting container '{container_name}'")
+    except subprocess.CalledProcessError as e:
+        if 'No such container' in e.stderr:
+            raise HTTPException(status_code=404, detail=f"Container '{container_name}' not found")
+        logger.error("restart_container_failed", container_name=container_name, error=e.stderr)
+        raise HTTPException(status_code=500, detail=f"Error restarting container: {e.stderr}")
+    except Exception as e:
+        logger.error("restart_container_failed", container_name=container_name, error=str(e))
+        raise HTTPException(status_code=500, detail=f"Error restarting container: {str(e)}")
+
+# ============================================================================
 # Eventos de inicio
 # ============================================================================
 
@@ -417,3 +732,61 @@ async def startup_event():
 async def shutdown_event():
     """Evento de cierre de la aplicación"""
     logger.info("api_gateway_shutdown")
+
+# ============================================================================
+# Funciones de RabbitMQ
+# ============================================================================
+
+def publish_confirmed_event(event: dict):
+    """Publicar evento confirmado a la cola de RabbitMQ"""
+    try:
+        credentials = pika.PlainCredentials(RABBITMQ_USER, RABBITMQ_PASS)
+        connection = pika.BlockingConnection(
+            pika.ConnectionParameters(
+                host=RABBITMQ_HOST,
+                credentials=credentials
+            )
+        )
+        channel = connection.channel()
+        
+        # Declarar la cola confirmed_events
+        channel.queue_declare(queue='confirmed_events', durable=True)
+        
+        # Publicar el mensaje
+        message = json.dumps({
+            'event_id': event['event_id'],
+            'type': event['type'],
+            'occurred_at': event['occurred_at'].isoformat() if isinstance(event['occurred_at'], datetime) else event['occurred_at'],
+            'zone': event['zone'],
+            'severity': event['severity'],
+            'title': event['title'],
+            'description': event['description'],
+            'evidence_url': event['evidence_url'],
+            'status': event['status'],
+            'score': event['score'],
+            'province_id': event.get('province_id')
+        })
+        
+        channel.basic_publish(
+            exchange='',
+            routing_key='confirmed_events',
+            body=message,
+            properties=pika.BasicProperties(
+                delivery_mode=2,  # Mensaje persistente
+            )
+        )
+        
+        connection.close()
+        logger.info(
+            "event_published_to_rabbitmq",
+            event_id=event['event_id'],
+            queue='confirmed_events'
+        )
+        
+    except Exception as e:
+        logger.error(
+            "rabbitmq_publish_failed",
+            event_id=event.get('event_id'),
+            error=str(e)
+        )
+        raise

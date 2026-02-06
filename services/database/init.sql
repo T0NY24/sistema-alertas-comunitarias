@@ -1,23 +1,47 @@
--- Extensiones
+-- Extensiones necesarias
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
--- Tabla de fuentes oficiales
+---
+-- 1. TABLAS DE CATÁLOGO (PROVINCIAS Y UBICACIONES)
+---
+CREATE TABLE provinces (
+    province_id INTEGER PRIMARY KEY,
+    name VARCHAR(255) NOT NULL
+);
+
+CREATE TABLE locations (
+    location_id UUID PRIMARY KEY DEFAULT uuid_generate_v4 (),
+    name VARCHAR(255) NOT NULL,
+    active BOOLEAN DEFAULT true
+);
+
+---
+-- 2. GESTIÓN DE USUARIOS
+---
+CREATE TABLE users (
+    user_id UUID PRIMARY KEY DEFAULT uuid_generate_v4 (),
+    email VARCHAR(255) UNIQUE NOT NULL,
+    password_hash VARCHAR(255) NOT NULL,
+    role VARCHAR(50) DEFAULT 'user',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+---
+-- 3. FUENTES Y EVENTOS CRUDOS
+---
 CREATE TABLE sources (
     source_id UUID PRIMARY KEY DEFAULT uuid_generate_v4 (),
     name VARCHAR(255) NOT NULL,
     base_url TEXT NOT NULL,
-    type VARCHAR(50) NOT NULL CHECK (
-        type IN ('sismo', 'lluvia', 'corte')
-    ),
+    type VARCHAR(50) NOT NULL,
     domain VARCHAR(255) NOT NULL,
     parser_config JSONB NOT NULL,
-    frequency_sec INTEGER NOT NULL DEFAULT 300,
+    frequency_sec INTEGER DEFAULT 300,
     active BOOLEAN DEFAULT true,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Tabla de eventos crudos (raw)
 CREATE TABLE raw_events (
     raw_id UUID PRIMARY KEY DEFAULT uuid_generate_v4 (),
     source_id UUID REFERENCES sources (source_id),
@@ -26,7 +50,9 @@ CREATE TABLE raw_events (
     raw_hash VARCHAR(64) UNIQUE NOT NULL
 );
 
--- Tabla de eventos normalizados
+---
+-- 4. EVENTOS NORMALIZADOS
+---
 CREATE TABLE events (
     event_id UUID PRIMARY KEY DEFAULT uuid_generate_v4 (),
     type VARCHAR(50) NOT NULL,
@@ -38,148 +64,54 @@ CREATE TABLE events (
     evidence_url TEXT,
     source_id UUID REFERENCES sources (source_id),
     dedup_hash VARCHAR(64) UNIQUE NOT NULL,
-    status VARCHAR(50) DEFAULT 'NO_VERIFICADO' CHECK (
-        status IN (
-            'CONFIRMADO',
-            'EN_VERIFICACION',
-            'NO_VERIFICADO'
-        )
-    ),
+    status VARCHAR(50) DEFAULT 'NO_VERIFICADO',
     score INTEGER DEFAULT 0,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Tabla de reglas de verificación
-CREATE TABLE verification_rules (
-    rule_id UUID PRIMARY KEY DEFAULT uuid_generate_v4 (),
-    name VARCHAR(255) NOT NULL,
-    weight INTEGER NOT NULL,
-    enabled BOOLEAN DEFAULT true
-);
-
--- Tabla de usuarios
-CREATE TABLE users (
-    user_id UUID PRIMARY KEY DEFAULT uuid_generate_v4 (),
-    email VARCHAR(255) UNIQUE NOT NULL,
-    password_hash VARCHAR(255) NOT NULL,
-    role VARCHAR(50) DEFAULT 'user' CHECK (
-        role IN ('admin', 'operator', 'user')
-    ),
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
--- Tabla de suscripciones
+---
+-- 5. SUSCRIPCIONES Y NOTIFICACIONES
+---
 CREATE TABLE subscriptions (
     sub_id UUID PRIMARY KEY DEFAULT uuid_generate_v4 (),
     user_id UUID REFERENCES users (user_id),
     type VARCHAR(50),
     zone VARCHAR(255),
-    channel VARCHAR(50) NOT NULL CHECK (
-        channel IN (
-            'telegram',
-            'email',
-            'whatsapp'
-        )
-    ),
-    channel_id VARCHAR(255) NOT NULL UNIQUE,
+    channel VARCHAR(50) NOT NULL,
+    channel_id VARCHAR(255) NOT NULL,
     active BOOLEAN DEFAULT true,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    province_id INTEGER REFERENCES provinces (province_id)
 );
 
--- Tabla de notificaciones
 CREATE TABLE notifications (
     notif_id UUID PRIMARY KEY DEFAULT uuid_generate_v4 (),
     event_id UUID REFERENCES events (event_id),
     sub_id UUID REFERENCES subscriptions (sub_id),
     channel VARCHAR(50) NOT NULL,
     to_address VARCHAR(255) NOT NULL,
-    sent_at TIMESTAMP,
-    status VARCHAR(50) DEFAULT 'pending' CHECK (
-        status IN ('pending', 'sent', 'failed')
-    ),
+    sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    status VARCHAR(50) DEFAULT 'pending',
     error_message TEXT
 );
 
--- Tabla de auditoría
+---
+-- 6. AUDITORÍA Y REGLAS
+---
 CREATE TABLE audit_logs (
     audit_id UUID PRIMARY KEY DEFAULT uuid_generate_v4 (),
     user_id UUID REFERENCES users (user_id),
     action VARCHAR(255) NOT NULL,
-    entity VARCHAR(100) NOT NULL,
+    entity VARCHAR(255) NOT NULL,
     entity_id UUID,
     timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     metadata JSONB
 );
 
--- Índices para optimización
-CREATE INDEX idx_events_status ON events (status);
-
-CREATE INDEX idx_events_type ON events(type);
-
-CREATE INDEX idx_events_occurred_at ON events (occurred_at);
-
-CREATE INDEX idx_events_zone ON events (zone);
-
-CREATE INDEX idx_raw_events_source ON raw_events (source_id);
-
-CREATE INDEX idx_subscriptions_user ON subscriptions (user_id);
-
-CREATE INDEX idx_notifications_event ON notifications (event_id);
-
--- Insertar reglas de verificación por defecto
-INSERT INTO
-    verification_rules (name, weight, enabled)
-VALUES (
-        'Dominio en lista blanca',
-        40,
-        true
-    ),
-    (
-        'Evidencia URL válida',
-        15,
-        true
-    ),
-    (
-        'Timestamp reciente',
-        15,
-        true
-    ),
-    ('Campos completos', 10, true),
-    (
-        'Corroboración cruzada',
-        20,
-        true
-    );
-
--- Función para actualizar updated_at automáticamente
-CREATE OR REPLACE FUNCTION update_updated_at_column()
-RETURNS TRIGGER AS $$
-BEGIN
-    NEW.updated_at = CURRENT_TIMESTAMP;
-    RETURN NEW;
-END;
-$$ language 'plpgsql';
-
--- Triggers para updated_at
-CREATE TRIGGER update_sources_updated_at BEFORE UPDATE ON sources
-    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
-
-CREATE TRIGGER update_events_updated_at BEFORE UPDATE ON events
-    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
-
--- Insertar usuario admin por defecto (password: admin123)
-INSERT INTO
-    users (email, password_hash, role)
-VALUES (
-        'admin@sacv.local',
-        '$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewY5GyYzS8qB.W96',
-        'admin'
-    );
-
--- Mensaje de confirmación
-DO $$
-BEGIN
-    RAISE NOTICE 'Base de datos inicializada correctamente';
-    RAISE NOTICE 'Usuario admin creado: admin@sacv.local / admin123';
-END $$;
+CREATE TABLE verification_rules (
+    rule_id UUID PRIMARY KEY DEFAULT uuid_generate_v4 (),
+    name VARCHAR(255) NOT NULL,
+    weight INTEGER DEFAULT 0,
+    enabled BOOLEAN DEFAULT true
+);
