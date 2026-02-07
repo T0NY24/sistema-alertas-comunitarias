@@ -5,13 +5,33 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-# Diccionario oficial alineado con tus IDs de la base de datos
+# Diccionario oficial alineado con los IDs exactos de la base de datos
+# Estos IDs deben coincidir EXACTAMENTE con la tabla provinces
 PROVINCIAS = {
-    "1": "AZUAY", "2": "BOLIVAR", "3": "CAÑAR", "4": "CARCHI", "5": "COTOPAXI",
-    "6": "CHIMBORAZO", "7": "EL ORO", "8": "ESMERALDAS", "9": "GUAYAS", "10": "IMBABURA",
-    "11": "LOJA", "12": "LOS RIOS", "13": "MANABI", "14": "MORONA SANTIAGO", "15": "NAPO",
-    "16": "PASTAZA", "17": "PICHINCHA", "18": "TUNGURAHUA", "19": "ZAMORA CHINCHIPE",
-    "20": "GALAPAGOS", "21": "SUCUMBIOS", "22": "ORELLANA", "23": "STO. DOMINGO", "24": "SANTA ELENA"
+    "1": "Azuay",
+    "2": "Bolívar",
+    "3": "Cañar",
+    "4": "Carchi",
+    "5": "Chimborazo",
+    "6": "Cotopaxi",
+    "7": "El Oro",
+    "8": "Esmeraldas",
+    "9": "Galápagos",
+    "10": "Guayas",
+    "11": "Imbabura",
+    "12": "Loja",
+    "13": "Los Ríos",
+    "14": "Manabí",
+    "15": "Morona Santiago",
+    "16": "Napo",
+    "17": "Orellana",
+    "18": "Pastaza",
+    "19": "Pichincha",
+    "20": "Santa Elena",
+    "21": "Santo Domingo de los Tsáchilas",
+    "22": "Sucumbíos",
+    "23": "Tungurahua",
+    "24": "Zamora Chinchipe"
 }
 
 # ID especial para alertas nacionales
