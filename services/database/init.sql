@@ -80,7 +80,7 @@ CREATE TABLE subscriptions (
     type VARCHAR(50),
     zone VARCHAR(255),
     channel VARCHAR(50) NOT NULL,
-    channel_id VARCHAR(255) NOT NULL,
+    channel_id VARCHAR(255) NOT NULL UNIQUE,
     active BOOLEAN DEFAULT true,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     province_id INTEGER REFERENCES provinces (province_id)
