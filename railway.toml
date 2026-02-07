@@ -1,0 +1,27 @@
+# Railway Configuration File
+# Docs: https://docs.railway.app/deploy/config-as-code
+
+# Railway will automatically detect docker-compose.yml
+# This file provides additional configuration options
+
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "docker-compose.yml"
+
+# Watch paths for automatic deployments
+watchPatterns = [
+  "services/**",
+  "admin-panel/**",
+  "docker-compose.yml"
+]
+
+# Health checks
+[deploy]
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 3
+
+# Recommended resources for each service
+# Adjust based on your Railway plan
+
+# Note: Railway will create separate services for each container in docker-compose.yml
+# These settings can be configured in Railway dashboard per service

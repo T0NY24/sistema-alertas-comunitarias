@@ -1,7 +1,7 @@
 import axios from 'axios';
 
 // Base URL del API Gateway
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://217.216.67.99:8001';
 
 export const apiClient = axios.create({
     baseURL: API_BASE_URL,

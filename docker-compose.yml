@@ -10,10 +10,10 @@ services:
       POSTGRES_USER: sacv_user
       POSTGRES_PASSWORD: ${DB_PASSWORD}
     volumes:
-      - ./data/postgres:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql/data
       - ./services/database/init.sql:/docker-entrypoint-initdb.d/init.sql
     ports:
-      - "5432:5432"
+      - "5433:5432"
     networks:
       - sacv_network
     healthcheck:
@@ -29,9 +29,9 @@ services:
     container_name: sacv_redis
     command: redis-server --appendonly yes
     volumes:
-      - ./data/redis:/data
+      - redis_data:/data
     ports:
-      - "6379:6379"
+      - "6380:6379"
     networks:
       - sacv_network
     healthcheck:
@@ -49,10 +49,10 @@ services:
       RABBITMQ_DEFAULT_USER: sacv
       RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD}
     volumes:
-      - ./data/rabbitmq:/var/lib/rabbitmq
+      - rabbitmq_data:/var/lib/rabbitmq
     ports:
-      - "5672:5672" # AMQP
-      - "15672:15672" # Management UI
+      - "5673:5672"
+      - "15673:15672"
     networks:
       - sacv_network
     healthcheck:
@@ -158,10 +158,8 @@ services:
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_USER: sacv
       RABBITMQ_PASS: ${RABBITMQ_PASSWORD}
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock # Para gestión de contenedores
     ports:
-      - "8000:8000"
+      - "8001:8000"
     depends_on:
       postgres:
         condition: service_healthy
@@ -174,9 +172,9 @@ services:
     build: ./admin-panel
     container_name: sacv_admin
     ports:
-      - "3000:80"
+      - "3001:80"
     environment:
-      - VITE_API_URL=http://localhost:8000
+      - VITE_API_URL=http://217.216.67.99:8001
     depends_on:
       - api-gateway
     networks:

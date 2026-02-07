@@ -27,6 +27,19 @@ Sistema completo de alertas comunitarias que:
 **Servicios**: 8 microservicios  
 **Tecnología**: Python, Docker, PostgreSQL, RabbitMQ, Redis
 
+## 🚀 Despliegue en Producción
+
+Este proyecto puede desplegarse en **Railway.app** que soporta Docker Compose nativamente.
+
+**Guía de despliegue completa:** Ver [DEPLOYMENT.md](./DEPLOYMENT.md)
+
+**Pasos rápidos:**
+1. Crear cuenta en [railway.app](https://railway.app)
+2. Conectar repositorio GitHub
+3. Railway detecta automáticamente `docker-compose.yml`
+4. Configurar variables de entorno
+5. Deploy automático en minutos
+
 ---
 
 ## Prerequisitos

@@ -1,0 +1,43 @@
+# Railway ignore patterns
+# Similar to .gitignore, but for Railway deployments
+
+# Environment files (configure in Railway dashboard instead)
+.env
+.env.local
+.env.*.local
+
+# Data directories (use Railway volumes instead)
+data/
+*/data/
+
+# Node modules (will be installed during build)
+node_modules/
+*/node_modules/
+
+# Build artifacts
+dist/
+build/
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Git
+.git/
+.gitignore
+
+# Documentation (not needed for runtime)
+docs/
+*.md
+!README.md
+
+# Scripts (unless needed for deployment)
+scripts/
+diagrams/
