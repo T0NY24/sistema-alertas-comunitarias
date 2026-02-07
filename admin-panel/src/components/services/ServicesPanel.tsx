@@ -23,7 +23,7 @@ export const ServicesPanel: React.FC = () => {
 
     const fetchContainers = async () => {
         try {
-            const response = await fetch('http://localhost:8000/api/containers');
+            const response = await fetch('http://217.216.67.99:8001/api/containers');
             if (response.ok) {
                 const data = await response.json();
                 setContainers(data);
@@ -40,7 +40,7 @@ export const ServicesPanel: React.FC = () => {
 
         setRestarting(containerName);
         try {
-            const response = await fetch(`http://localhost:8000/api/containers/${containerName}/restart`, {
+            const response = await fetch(`http://217.216.67.99:8001/api/containers/${containerName}/restart`, {
                 method: 'POST',
             });
 
