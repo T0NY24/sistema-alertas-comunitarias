@@ -1,8 +1,5 @@
 import axios from 'axios';
-
-// Base URL del API Gateway
-// Base URL del API Gateway - HARDCODED PARA VPS
-const API_BASE_URL = 'http://217.216.67.99:8001';
+import { API_BASE_URL } from '../config';
 
 export const apiClient = axios.create({
     baseURL: API_BASE_URL,

@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { API_BASE_URL } from '../../config';
 import { Server, RefreshCw, CheckCircle, XCircle, Activity } from 'lucide-react';
 
 interface Container {
@@ -23,7 +24,7 @@ export const ServicesPanel: React.FC = () => {
 
     const fetchContainers = async () => {
         try {
-            const response = await fetch('http://217.216.67.99:8001/api/containers');
+            const response = await fetch(`${API_BASE_URL}/api/containers`);
             if (response.ok) {
                 const data = await response.json();
                 setContainers(data);
@@ -40,7 +41,7 @@ export const ServicesPanel: React.FC = () => {
 
         setRestarting(containerName);
         try {
-            const response = await fetch(`http://217.216.67.99:8001/api/containers/${containerName}/restart`, {
+            const response = await fetch(`${API_BASE_URL}/api/containers/${containerName}/restart`, {
                 method: 'POST',
             });
 
