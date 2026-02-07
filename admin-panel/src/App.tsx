@@ -38,6 +38,29 @@ function AppContent() {
     });
   };
 
+  const handleMassSimulation = async (events: any[]) => {
+    let successCount = 0;
+    let failureCount = 0;
+
+    for (const event of events) {
+      try {
+        await createEventMutation.mutateAsync(event);
+        successCount++;
+      } catch (error) {
+        console.error(`Error creating event for ${event.zone}:`, error);
+        failureCount++;
+      }
+    }
+
+    if (failureCount === 0) {
+      alert(`🎉 ¡Simulación masiva completada!\n\n✅ ${successCount} eventos creados exitosamente para las 24 provincias.\n\n📱 Revisa tu Telegram para las notificaciones.`);
+    } else {
+      alert(`⚠️ Simulación completada con errores:\n\n✅ Exitosos: ${successCount}\n❌ Fallidos: ${failureCount}\n\nRevisa la consola para más detalles.`);
+    }
+
+    setCurrentView('events'); // Cambiar a vista de eventos
+  };
+
   return (
     <div className="min-h-screen bg-midnight-bg">
       {/* Header */}
@@ -117,6 +140,7 @@ function AppContent() {
         {currentView === 'simulation' && (
           <SimulationModule
             onSubmit={handleSimulationSubmit}
+            onMassSimulation={handleMassSimulation}
             isLoading={createEventMutation.isPending}
           />
         )}

@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { AlertCircle, CloudRain, Zap, Activity } from 'lucide-react';
+import { AlertCircle, CloudRain, Zap, Activity, Globe } from 'lucide-react';
 import { useProvinces } from '../../api/endpoints';
 
 interface PanicButtonProps {
@@ -26,11 +26,13 @@ const PanicButton: React.FC<PanicButtonProps> = ({ icon: Icon, label, type, seve
 
 interface SimulationFormProps {
     onSubmit: (event: any) => void;
+    onMassSimulation?: (events: any[]) => Promise<void>;
     isLoading: boolean;
 }
 
-export const SimulationModule: React.FC<SimulationFormProps> = ({ onSubmit, isLoading }) => {
+export const SimulationModule: React.FC<SimulationFormProps> = ({ onSubmit, onMassSimulation, isLoading }) => {
     const { data: provinces = [] } = useProvinces();
+    const [isMassSimulating, setIsMassSimulating] = useState(false);
 
     const [formData, setFormData] = useState({
         type: 'sismo',
@@ -91,8 +93,45 @@ export const SimulationModule: React.FC<SimulationFormProps> = ({ onSubmit, isLo
         onSubmit({
             ...formData,
             source_id: null,
-            status: 'NO_VERIFICADO'
+            status: 'CONFIRMADO' // Cambiar a CONFIRMADO por defecto para que envíe notificaciones
         });
+    };
+
+    const handleMassSimulation = async () => {
+        if (!onMassSimulation || isMassSimulating) return;
+
+        setIsMassSimulating(true);
+
+        try {
+            // Tipos de eventos para variar
+            const eventTypes = [
+                { type: 'sismo', severity: 'Alta', icon: '🌋' },
+                { type: 'lluvia', severity: 'Media', icon: '🌧️' },
+                { type: 'corte', severity: 'Baja', icon: '⚡' }
+            ];
+
+            // Crear un evento para cada provincia
+            const events = provinces.map((province: any, index: number) => {
+                const eventType = eventTypes[index % eventTypes.length];
+
+                return {
+                    type: eventType.type,
+                    severity: eventType.severity,
+                    zone: province.name,
+                    province_id: province.province_id,
+                    title: `${eventType.icon} ${eventType.type.toUpperCase()} en ${province.name}`,
+                    description: `Evento de prueba masiva generado automáticamente para ${province.name}. Severidad: ${eventType.severity}`,
+                    evidence_url: 'https://ejemplo.com/prueba-masiva',
+                    status: 'CONFIRMADO', // Importante: CONFIRMADO para enviar notificaciones
+                    source_id: null,
+                    score: 100
+                };
+            });
+
+            await onMassSimulation(events);
+        } finally {
+            setIsMassSimulating(false);
+        }
     };
 
     return (
@@ -162,6 +201,48 @@ export const SimulationModule: React.FC<SimulationFormProps> = ({ onSubmit, isLo
                     />
                 </div>
             </div>
+
+            {/* Mass Simulation - 24 Provinces */}
+            {onMassSimulation && (
+                <div className="card bg-gradient-to-r from-purple-900/20 to-blue-900/20 border-purple-500/30">
+                    <div className="flex items-start gap-4">
+                        <Globe className="w-12 h-12 text-purple-400 flex-shrink-0" />
+                        <div className="flex-1">
+                            <h3 className="text-lg font-semibold text-white mb-2">
+                                🇪🇨 Simulación Masiva Nacional
+                            </h3>
+                            <p className="text-sm text-gray-300 mb-4">
+                                Crea eventos de prueba para <strong>las 24 provincias de Ecuador</strong> con un solo clic.
+                                Cada provincia recibirá un evento diferente (SISMO, LLUVIA, CORTE) marcado como CONFIRMADO.
+                            </p>
+                            <div className="flex items-center gap-3">
+                                <button
+                                    onClick={handleMassSimulation}
+                                    disabled={isMassSimulating || provinces.length === 0}
+                                    className="btn-primary bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 flex items-center gap-2"
+                                >
+                                    {isMassSimulating ? (
+                                        <>
+                                            <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                                            Enviando a {provinces.length} provincias...
+                                        </>
+                                    ) : (
+                                        <>
+                                            <Globe className="w-4 h-4" />
+                                            Simular en 24 Provincias
+                                        </>
+                                    )}
+                                </button>
+                                {provinces.length > 0 && (
+                                    <span className="text-xs text-gray-400">
+                                        📊 {provinces.length} provincias detectadas
+                                    </span>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
 
             {/* Manual Event Form */}
             <div className="card">
