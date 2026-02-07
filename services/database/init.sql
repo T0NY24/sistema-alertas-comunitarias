@@ -66,6 +66,7 @@ CREATE TABLE events (
     dedup_hash VARCHAR(64) UNIQUE NOT NULL,
     status VARCHAR(50) DEFAULT 'NO_VERIFICADO',
     score INTEGER DEFAULT 0,
+    province_id INTEGER REFERENCES provinces (province_id),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
